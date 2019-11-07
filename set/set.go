@@ -29,8 +29,7 @@ func New(slice interface{},
 	equal ...func(s1, s2 interface{}) bool,
 ) Set {
 	s := &set{
-		less:   less,
-		swaper: reflect.Swapper(slice),
+		less: less,
 		lessFunc: func(s interface{}) func(i, j int) bool {
 			return func(i, j int) bool {
 				rv := reflect.ValueOf(s)
@@ -46,6 +45,10 @@ func New(slice interface{},
 			return ok
 		}
 	}
+	if slice == nil {
+		return s
+	}
+	s.swaper = reflect.Swapper(slice)
 	rv := reflect.ValueOf(slice)
 	if rv.Len() == 0 {
 		s.rv = rv
@@ -213,7 +216,7 @@ func (p set) Has(v interface{}, pos int) bool {
 func (p *set) Insert(v ...interface{}) (added int) {
 	for _, arg := range v {
 		rv := reflect.ValueOf(arg)
-		if rv.Type() == p.rv.Type() {
+		if rv.Type().Kind() == reflect.Slice {
 			added += p.InsertSlice(arg, false)
 			continue
 		}
@@ -363,7 +366,7 @@ func (p set) Equal(slice interface{}) bool {
 func (p set) Clone() Set {
 	rv := reflect.MakeSlice(p.rv.Type(), p.rv.Len(), p.rv.Len())
 	reflect.Copy(rv, p.rv)
-	return p.new(rv)
+	return p.new(rv, p.swaper)
 }
 
 func (p *set) Intersection(s Set) Set {
@@ -382,28 +385,32 @@ func (p *set) Intersection(s Set) Set {
 			dst = reflect.Append(dst, v)
 		}
 	}
-	return p.new(dst)
+	return p.new(dst, p.swaper)
 }
 
-func (p *set) new(rv reflect.Value) *set {
+func (p *set) new(rv reflect.Value, swaper func(i, j int)) *set {
 	return &set{
 		lessFunc: p.lessFunc,
 		less:     p.less,
 		equal:    p.equal,
-		swaper:   p.swaper,
+		swaper:   swaper,
 		rv:       rv,
 	}
 }
 
 func (p *set) Zero() Set {
-	return p.new(reflect.Zero(p.rv.Type()))
+	return p.new(reflect.Zero(p.rv.Type()), p.swaper)
 }
 
 func (p *set) New(slice interface{}, sorted bool) Set {
-	if sorted {
-		return p.new(reflect.ValueOf(slice))
+	swaper := p.swaper
+	if !p.rv.IsValid() {
+		swaper = reflect.Swapper(slice)
 	}
-	s := p.Zero()
+	if sorted {
+		return p.new(reflect.ValueOf(slice), swaper)
+	}
+	s := p.new(reflect.Zero(reflect.TypeOf(slice)), swaper)
 	s.Insert(slice)
 	return s
 }

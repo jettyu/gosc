@@ -135,3 +135,11 @@ func TestReflectErase(t *testing.T) {
 		t.Fatal(rv.Interface())
 	}
 }
+
+func TestNil(t *testing.T) {
+	s := set.New(nil, func(s1, s2 interface{}) bool { return s1.(int) < s2.(int) })
+	s = s.New([]int{2, 3, 1}, false)
+	t.Log(s.Slice())
+	s = s.New([]int{0, 1, 2}, true)
+	t.Log(s.Slice())
+}
