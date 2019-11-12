@@ -143,3 +143,24 @@ func TestNil(t *testing.T) {
 	s = s.New([]int{0, 1, 2}, true)
 	t.Log(s.Slice())
 }
+
+type testStruct struct {
+	ID    int
+	Value int
+}
+
+func TestReplace(t *testing.T) {
+	testStructSet := set.New([]testStruct{},
+		func(s1, s2 interface{}) bool { return s1.(testStruct).ID < s2.(testStruct).ID },
+		func(s1, s2 interface{}) bool { return s1.(testStruct).ID == s2.(testStruct).ID },
+	)
+	testStructSet.Insert([]testStruct{{1, 1}, {2, 2}, {3, 3}})
+	testStructSet.Replace(testStruct{2, 5})
+	i := testStructSet.Search(testStruct{ID: 2}, 0)
+	if i != 1 {
+		t.Fatal(testStructSet.Slice(), i)
+	}
+	if testStructSet.Slice().([]testStruct)[i].Value != 5 {
+		t.Fatal(testStructSet.Slice())
+	}
+}

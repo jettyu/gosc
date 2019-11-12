@@ -13,6 +13,7 @@ type Set interface {
 	Search(v interface{}, pos int) int
 	Has(v interface{}, pos int) bool
 	Insert(v ...interface{}) int
+	Replace(v ...interface{}) int
 	Erase(v ...interface{}) int
 	ReSort()
 
@@ -105,6 +106,13 @@ func (p *safeSet) Has(v interface{}, pos int) bool {
 func (p *safeSet) Insert(v ...interface{}) int {
 	p.Lock()
 	n := p.set.Insert(v...)
+	p.Unlock()
+	return n
+}
+
+func (p *safeSet) Replace(v ...interface{}) int {
+	p.Lock()
+	n := p.set.Replace(v...)
 	p.Unlock()
 	return n
 }
@@ -225,6 +233,18 @@ func (p *set) Insert(v ...interface{}) (added int) {
 	return
 }
 
+func (p *set) Replace(v ...interface{}) (replaced int) {
+	for _, arg := range v {
+		rv := reflect.ValueOf(arg)
+		if rv.Type().Kind() == reflect.Slice {
+			replaced += p.ReplaceSlice(arg, false)
+			continue
+		}
+		replaced += p.ReplaceOne(arg)
+	}
+	return
+}
+
 func (p *set) Erase(v ...interface{}) (added int) {
 	for _, arg := range v {
 		rv := reflect.ValueOf(arg)
@@ -309,6 +329,77 @@ func (p *set) InsertOne(v interface{}) (added int) {
 
 	p.rv = ReflectInsertAt(p.rv, reflect.ValueOf(v), n)
 	added++
+	return
+}
+
+func (p *set) ReplaceSlice(slice interface{}, sorted bool) (replaced int) {
+	if !sorted {
+		p.sort(slice)
+	}
+	if p.rv.Len() == 0 && sorted {
+		p.rv = reflect.ValueOf(slice)
+		replaced = p.rv.Len()
+		return
+	}
+	rv := reflect.ValueOf(slice)
+	pos := 0
+	for i := 0; i < rv.Len(); i++ {
+		if p.rv.Len() == 0 {
+			p.rv = reflect.Append(p.rv, rv.Index(i))
+			replaced++
+			continue
+		}
+		ri := rv.Index(i)
+		v := ri.Interface()
+		pos += p.Search(v, pos)
+		n := pos
+		if pos < p.rv.Len() {
+			e := p.rv.Index(pos).Interface()
+			if p.equal(e, v) {
+				// has v
+				p.rv.Index(pos).Set(ri)
+				continue
+			} else if p.less(e, v) {
+				// less than v, insert after e
+				n++
+			}
+		} else {
+			pos--
+		}
+		replaced++
+		p.rv = ReflectInsertAt(p.rv, ri, n)
+		if pos > 0 {
+			pos--
+		}
+	}
+	return
+}
+
+// ReplaceOne ...
+func (p *set) ReplaceOne(v interface{}) (replaced int) {
+	if p.rv.Len() == 0 {
+		p.rv = reflect.Append(p.rv, reflect.ValueOf(v))
+		replaced++
+		return
+	}
+	pos := p.Search(v, 0)
+	n := pos
+	if pos < p.rv.Len() {
+		e := p.rv.Index(pos).Interface()
+		if p.equal(e, v) {
+			// has v
+			p.rv.Index(pos).Set(reflect.ValueOf(v))
+			return
+		} else if p.less(e, v) {
+			// less than v, insert after e
+			n++
+		}
+	} else {
+		pos--
+	}
+
+	p.rv = ReflectInsertAt(p.rv, reflect.ValueOf(v), n)
+	replaced++
 	return
 }
 
