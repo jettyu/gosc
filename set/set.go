@@ -213,12 +213,39 @@ func (p set) Search(v interface{}, pos int) int {
 	})
 }
 
-func (p set) Has(v interface{}, pos int) bool {
+func (p set) hasOne(v interface{}, pos int) bool {
 	n := p.Search(v, pos)
 	if pos+n == p.rv.Len() || !p.equal(p.rv.Index(pos+n).Interface(), v) {
 		return false
 	}
 	return true
+}
+
+func (p set) hasSlice(slice interface{}, pos int) bool {
+	p.sort(slice)
+	rv := reflect.ValueOf(slice)
+	if rv.Len() > p.rv.Len() {
+		return false
+	}
+	if p.rv.Len() == 0 {
+		return true
+	}
+
+	for i := 0; i < rv.Len() && pos < p.rv.Len(); i++ {
+		v := rv.Index(i).Interface()
+		pos += p.Search(v, pos)
+		if pos == p.rv.Len() || !p.equal(p.rv.Index(pos).Interface(), v) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p set) Has(v interface{}, pos int) bool {
+	if reflect.TypeOf(v) == p.rv.Type() {
+		return p.hasSlice(v, pos)
+	}
+	return p.hasOne(v, pos)
 }
 
 func (p *set) Insert(v ...interface{}) (added int) {

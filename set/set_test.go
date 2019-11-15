@@ -29,6 +29,12 @@ func TestStrings(t *testing.T) {
 	if s.Has("10", 0) {
 		t.Fatal(s.Slice())
 	}
+	if !s.Has([]string{"1", "2", "5"}, 0) {
+		t.Fatal(s.Slice())
+	}
+	if s.Has([]string{"1", "2", "10"}, 0) {
+		t.Fatal(s.Slice())
+	}
 	if s.Insert("1", "5", "7", "8") != 2 {
 		t.Fatal(s.Slice())
 	}
