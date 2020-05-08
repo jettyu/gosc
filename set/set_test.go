@@ -55,7 +55,7 @@ func TestStrings(t *testing.T) {
 			t.Fatal(arr)
 		}
 	}
-	ins := s.Intersection(set.Strings([]string{"1", "2", "4", "6"}))
+	ins := s.Intersection(set.Strings([]string{"1", "2", "4", "6"}, true))
 	if !ins.Equal([]string{"2", "4"}) {
 		t.Fatal(ins.Slice())
 	}
@@ -168,5 +168,12 @@ func TestReplace(t *testing.T) {
 	}
 	if testStructSet.Slice().([]testStruct)[i].Value != 5 {
 		t.Fatal(testStructSet.Slice())
+	}
+}
+
+func TestZero(t *testing.T) {
+	zero := set.Ints([]int{1, 2}).Zero()
+	if zero.Len() != 0 {
+		t.Error(zero.Len())
 	}
 }

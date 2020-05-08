@@ -29,35 +29,7 @@ func New(slice interface{},
 	less func(s1, s2 interface{}) bool,
 	equal ...func(s1, s2 interface{}) bool,
 ) Set {
-	s := &set{
-		less: less,
-		lessFunc: func(s interface{}) func(i, j int) bool {
-			return func(i, j int) bool {
-				rv := reflect.ValueOf(s)
-				return less(rv.Index(i).Interface(), rv.Index(j).Interface())
-			}
-		},
-	}
-	if len(equal) > 0 {
-		s.equal = equal[0]
-	} else {
-		s.equal = func(s1, s2 interface{}) bool {
-			ok := reflect.DeepEqual(s1, s2)
-			return ok
-		}
-	}
-	if slice == nil {
-		return s
-	}
-	s.swaper = reflect.Swapper(slice)
-	rv := reflect.ValueOf(slice)
-	if rv.Len() == 0 {
-		s.rv = rv
-	} else {
-		s.rv = reflect.Zero(reflect.TypeOf(slice))
-		s.InsertSlice(slice, false)
-	}
-	return s
+	return newSet(false, slice, less, equal...)
 }
 
 // NewSafe ...
@@ -65,6 +37,27 @@ func NewSafe(s Set) Set {
 	return &safeSet{
 		set: s,
 	}
+}
+
+func NewStable(slice interface{},
+	less func(s1, s2 interface{}) bool,
+	equal ...func(s1, s2 interface{}) bool,
+) Set {
+	return newSet(true, slice, less, equal...)
+}
+
+func NewSorted(slice interface{},
+	less func(s1, s2 interface{}) bool,
+	equal ...func(s1, s2 interface{}) bool,
+) Set {
+	return New(nil, less, equal...).New(slice, true)
+}
+
+func NewStableSorted(slice interface{},
+	less func(s1, s2 interface{}) bool,
+	equal ...func(s1, s2 interface{}) bool,
+) Set {
+	return NewStable(nil, less, equal...).New(slice, true)
 }
 
 // SafeSet ...
@@ -193,8 +186,45 @@ type set struct {
 	rv       reflect.Value
 	less     func(s1, s2 interface{}) bool
 	equal    func(s1, s2 interface{}) bool
-	swaper   func(i, j int)
+	swapper  func(i, j int)
 	lessFunc func(slice interface{}) func(i, j int) bool
+	stable   bool
+}
+
+func newSet(stable bool,
+	slice interface{},
+	less func(s1, s2 interface{}) bool,
+	equal ...func(s1, s2 interface{}) bool) *set {
+	s := &set{
+		less: less,
+		lessFunc: func(s interface{}) func(i, j int) bool {
+			return func(i, j int) bool {
+				rv := reflect.ValueOf(s)
+				return less(rv.Index(i).Interface(), rv.Index(j).Interface())
+			}
+		},
+		stable: stable,
+	}
+	if len(equal) > 0 {
+		s.equal = equal[0]
+	} else {
+		s.equal = func(s1, s2 interface{}) bool {
+			ok := reflect.DeepEqual(s1, s2)
+			return ok
+		}
+	}
+	if slice == nil {
+		return s
+	}
+	s.swapper = reflect.Swapper(slice)
+	rv := reflect.ValueOf(slice)
+	if rv.Len() == 0 {
+		s.rv = rv
+	} else {
+		s.rv = reflect.Zero(reflect.TypeOf(slice))
+		s.InsertSlice(slice, false)
+	}
+	return s
 }
 
 var _ Set = (*set)(nil)
@@ -287,6 +317,10 @@ func (p *set) Erase(v ...interface{}) (added int) {
 func (p set) sort(slice interface{}) {
 	lf := p.lessFunc(slice)
 	if !sort.SliceIsSorted(slice, lf) {
+		if p.stable {
+			sort.SliceStable(slice, lf)
+			return
+		}
 		sort.Slice(slice, lf)
 	}
 }
@@ -350,8 +384,6 @@ func (p *set) InsertOne(v interface{}) (added int) {
 			// less than v, insert after e
 			n++
 		}
-	} else {
-		pos--
 	}
 
 	p.rv = ReflectInsertAt(p.rv, reflect.ValueOf(v), n)
@@ -421,8 +453,6 @@ func (p *set) ReplaceOne(v interface{}) (replaced int) {
 			// less than v, insert after e
 			n++
 		}
-	} else {
-		pos--
 	}
 
 	p.rv = ReflectInsertAt(p.rv, reflect.ValueOf(v), n)
@@ -484,7 +514,7 @@ func (p set) Equal(slice interface{}) bool {
 func (p set) Clone() Set {
 	rv := reflect.MakeSlice(p.rv.Type(), p.rv.Len(), p.rv.Len())
 	reflect.Copy(rv, p.rv)
-	return p.new(rv, p.swaper)
+	return p.new(rv, p.swapper)
 }
 
 func (p *set) Intersection(s Set) Set {
@@ -503,32 +533,36 @@ func (p *set) Intersection(s Set) Set {
 			dst = reflect.Append(dst, v)
 		}
 	}
-	return p.new(dst, p.swaper)
+	return p.new(dst, p.swapper)
 }
 
-func (p *set) new(rv reflect.Value, swaper func(i, j int)) *set {
+func (p *set) new(rv reflect.Value, swapper func(i, j int)) *set {
+	if swapper == nil && rv.IsValid() {
+		swapper = reflect.Swapper(rv.Interface())
+	}
 	return &set{
 		lessFunc: p.lessFunc,
 		less:     p.less,
 		equal:    p.equal,
-		swaper:   swaper,
+		swapper:  swapper,
 		rv:       rv,
+		stable:   p.stable,
 	}
 }
 
 func (p *set) Zero() Set {
-	return p.new(reflect.Zero(p.rv.Type()), p.swaper)
+	var rv reflect.Value
+	if p.rv.IsValid() {
+		rv = reflect.Zero(p.rv.Type())
+	}
+	return p.new(rv, p.swapper)
 }
 
 func (p *set) New(slice interface{}, sorted bool) Set {
-	swaper := p.swaper
-	if !p.rv.IsValid() {
-		swaper = reflect.Swapper(slice)
-	}
 	if sorted {
-		return p.new(reflect.ValueOf(slice), swaper)
+		return p.new(reflect.ValueOf(slice), p.swapper)
 	}
-	s := p.new(reflect.Zero(reflect.TypeOf(slice)), swaper)
+	s := p.new(reflect.Zero(reflect.TypeOf(slice)), p.swapper)
 	s.Insert(slice)
 	return s
 }
@@ -542,83 +576,123 @@ func (p *set) ReSort() {
 	p.sort(p.Slice())
 }
 
+func isSorted(sorted ...bool) bool {
+	if len(sorted) == 0 {
+		return false
+	}
+	return sorted[0]
+}
+
+// Strings ...
+func Strings(arr []string, sorted ...bool) Set {
+	return strings.New(arr, isSorted(sorted...))
+}
+
+// Ints ...
+func Ints(arr []int, sorted ...bool) Set {
+	return ints.New(arr, isSorted(sorted...))
+}
+
+// Int8s ...
+func Int8s(arr []int8, sorted ...bool) Set {
+	return int8s.New(arr, isSorted(sorted...))
+}
+
+// Int16s ...
+func Int16s(arr []int16, sorted ...bool) Set {
+	return int16s.New(arr, isSorted(sorted...))
+}
+
+// Int32s ...
+func Int32s(arr []int32, sorted ...bool) Set {
+	return int32s.New(arr, isSorted(sorted...))
+}
+
+// Int64s ...
+func Int64s(arr []int64, sorted ...bool) Set {
+	return int64s.New(arr, isSorted(sorted...))
+}
+
+// Uints ...
+func Uints(arr []uint, sorted ...bool) Set {
+	return uints.New(arr, isSorted(sorted...))
+}
+
+// Uint8s ...
+func Uint8s(arr []uint8, sorted ...bool) Set {
+	return uint8s.New(arr, isSorted(sorted...))
+
+}
+
+// Uint16s ...
+func Uint16s(arr []uint16, sorted ...bool) Set {
+	return uint16s.New(arr, isSorted(sorted...))
+
+}
+
+// Uint32s ...
+func Uint32s(arr []uint32, sorted ...bool) Set {
+	return uint32s.New(arr, isSorted(sorted...))
+}
+
+// Uint64s ...
+func Uint64s(arr []uint64, sorted ...bool) Set {
+	return uint64s.New(arr, isSorted(sorted...))
+
+}
+
+// Float32s ...
+func Float32s(arr []float32, sorted ...bool) Set {
+	return float32s.New(arr, isSorted(sorted...))
+}
+
+// Float64s ...
+func Float64s(arr []float64, sorted ...bool) Set {
+	return float64s.New(arr, isSorted(sorted...))
+}
+
 var (
-	// Strings ...
-	Strings = func(arr []string) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(string) < s2.(string) },
-		)
-	}
-	// Ints ...
-	Ints = func(arr []int) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(int) < s2.(int) },
-		)
-	}
-	// Int8s ...
-	Int8s = func(arr []int8) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(int8) < s2.(int8) },
-		)
-	}
-	// Int16s ...
-	Int16s = func(arr []int16) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(int16) < s2.(int16) },
-		)
-	}
-	// Int32s ...
-	Int32s = func(arr []int32) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(int32) < s2.(int32) },
-		)
-	}
-	// Int64s ...
-	Int64s = func(arr []int64) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(int64) < s2.(int64) },
-		)
-	}
-	// Uints ...
-	Uints = func(arr []uint) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(uint) < s2.(uint) },
-		)
-	}
-	// Uint8s ...
-	Uint8s = func(arr []uint8) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(uint8) < s2.(uint8) },
-		)
-	}
-	// Uint16s ...
-	Uint16s = func(arr []uint16) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(uint16) < s2.(uint16) },
-		)
-	}
-	// Uint32s ...
-	Uint32s = func(arr []uint32) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(uint32) < s2.(uint32) },
-		)
-	}
-	// Uint64s ...
-	Uint64s = func(arr []uint64) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(uint64) < s2.(uint64) },
-		)
-	}
-	// Float32s ...
-	Float32s = func(arr []float32) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(float32) < s2.(float32) },
-		)
-	}
-	// Float64s ...
-	Float64s = func(arr []float64) Set {
-		return New(arr,
-			func(s1, s2 interface{}) bool { return s1.(float64) < s2.(float64) },
-		)
-	}
+	strings = NewSorted([]string{},
+		func(s1, s2 interface{}) bool { return s1.(string) < s2.(string) })
+
+	ints = NewSorted([]int{},
+		func(s1, s2 interface{}) bool { return s1.(int) < s2.(int) })
+
+	int8s = NewSorted([]int8{},
+		func(s1, s2 interface{}) bool { return s1.(int8) < s2.(int8) },
+	)
+
+	int16s = NewSorted([]int16{},
+		func(s1, s2 interface{}) bool { return s1.(int16) < s2.(int16) },
+	)
+
+	int32s = NewSorted([]int32{},
+		func(s1, s2 interface{}) bool { return s1.(int32) < s2.(int32) },
+	)
+
+	int64s = NewSorted([]int64{},
+		func(s1, s2 interface{}) bool { return s1.(int64) < s2.(int64) },
+	)
+
+	uints = NewSorted([]uint{},
+		func(s1, s2 interface{}) bool { return s1.(uint) < s2.(uint) },
+	)
+	uint8s = NewSorted([]uint8{},
+		func(s1, s2 interface{}) bool { return s1.(uint8) < s2.(uint8) },
+	)
+	uint16s = NewSorted([]uint16{},
+		func(s1, s2 interface{}) bool { return s1.(uint16) < s2.(uint16) },
+	)
+	uint32s = NewSorted([]uint32{},
+		func(s1, s2 interface{}) bool { return s1.(uint32) < s2.(uint32) },
+	)
+	uint64s = New([]uint64{},
+		func(s1, s2 interface{}) bool { return s1.(uint64) < s2.(uint64) },
+	)
+	float32s = New([]float32{},
+		func(s1, s2 interface{}) bool { return s1.(float32) < s2.(float32) },
+	)
+	float64s = New([]float64{},
+		func(s1, s2 interface{}) bool { return s1.(float64) < s2.(float64) },
+	)
 )
